@@ -7,13 +7,42 @@ for a fixed set of commute stops plus current weather conditions.
 
 ## Hardware Target
 
-- **Microcontroller**: ESP32-S3 (WiFi required for live data)
-- **Display**: 5" TFT, 800×480 resolution, RGB parallel interface
-- **Recommended boards**:
-  - Sunton ESP32-S3 5" (budget, AliExpress, ~$20–25)
-  - Makerfabs ESP32-S3 5" Parallel TFT (~$35)
-  - Waveshare ESP32-S3 Touch LCD 4.3" (smaller but polished, ~$30)
-- **UI library**: LVGL (v8 or v9)
+### Selected Board — Waveshare ESP32-S3-Touch-LCD-7B
+
+**The recommended board for this project.**
+
+| Spec | Detail |
+|---|---|
+| MCU | ESP32-S3R8 (dual-core 240MHz, 8MB PSRAM) |
+| Display | 7" IPS TFT, 800×480, capacitive 5-point touch |
+| Interface | RGB parallel (16-bit) — required for 7" at usable refresh rates |
+| WiFi | 802.11 b/g/n (2.4GHz) — built in |
+| USB | USB-C (programming + power) |
+| Storage | MicroSD card slot |
+| Power | USB-C or LiPo battery connector |
+| Price | ~$45–55 (Waveshare official store or AliExpress) |
+
+**Why this board:**
+- Best-documented 7" ESP32 option — Waveshare ships Arduino and ESP-IDF examples
+- ESP32-S3's PSRAM is essential: a 7" 800×480 16-bit framebuffer is ~750KB, which won't fit in internal SRAM alone
+- LVGL has a dedicated driver config for this board in the community examples
+- `esp_lcd` (ESP-IDF component, works in Arduino) handles the RGB panel driver natively
+- All-in-one: no wiring, no mismatch between display and controller
+
+**Search terms for ordering**: `Waveshare ESP32-S3 7inch Touch LCD` or part number `ESP32-S3-Touch-LCD-7B`
+
+### Alternative Boards (if unavailable)
+
+| Board | Size | Notes |
+|---|---|---|
+| Elecrow CrowPanel 7.0" ESP32 | 7" 800×480 | Similar spec, slightly cheaper, good LVGL support |
+| Sunton ESP32-S3 7" | 7" 800×480 | Budget AliExpress option, same community drivers |
+| Waveshare ESP32-S3-Touch-LCD-5B | 5" 800×480 | Drop-down if 7" feels too large; identical software |
+
+### UI Library
+
+- **LVGL v8.3** (recommended over v9 for now — more Arduino examples exist for this board)
+- `ArduinoJson` v7 for parsing the backend API response
 
 ---
 
@@ -60,7 +89,7 @@ for a fixed set of commute stops plus current weather conditions.
 
 ---
 
-## Display Layout (800×480)
+## Display Layout (800×480 — 7" screen)
 
 ```
 +------------------+------------------+-------------------+
@@ -160,12 +189,167 @@ The ESP32 should only be responsible for rendering, not feed parsing.
 
 ---
 
+## Hardware Setup & Testing Guide
+
+### Prerequisites
+
+1. **Arduino IDE 2.x** (recommended) or PlatformIO in VS Code
+2. **ESP32 Arduino Core** — install via Boards Manager:
+   - Add to Additional Boards URLs: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
+   - Install: `esp32 by Espressif Systems` (v3.x)
+3. **Required libraries** — install via Library Manager:
+   - `LVGL` by LVGL (v8.3.x — pin to v8, not v9)
+   - `ArduinoJson` by Benoit Blanchon (v7.x)
+   - `ESP32Time` by Felix Biego (for NTP clock sync)
+
+### Board Configuration (Arduino IDE)
+
+```
+Board:              ESP32S3 Dev Module
+Flash Size:         16MB (or match your board)
+PSRAM:              OPI PSRAM  ← critical, enables the 8MB PSRAM
+Partition Scheme:   Huge APP (3MB No OTA / 1MB SPIFFS)
+Upload Speed:       921600
+USB CDC On Boot:    Enabled  ← allows Serial over USB-C
+```
+
+### LVGL Configuration
+
+Copy the LVGL config template into your sketch folder:
+
+```bash
+# From your Arduino libraries folder:
+cp ~/Arduino/libraries/lvgl/lv_conf_template.h ~/Arduino/libraries/lv_conf.h
+```
+
+Then in `lv_conf.h`, set:
+```c
+#define LV_COLOR_DEPTH 16
+#define LV_HOR_RES_MAX 800
+#define LV_VER_RES_MAX 480
+#define LV_MEM_SIZE (512 * 1024U)   // 512KB — safe with PSRAM
+```
+
+### Step 1 — Smoke Test: Light Up the Display
+
+Flash this minimal sketch first to verify the board and display are working before
+adding any application logic:
+
+```cpp
+#include <Arduino.h>
+#include <lvgl.h>
+#include <ESP_Panel_Library.h>  // Waveshare ESP32-S3-Touch-LCD-7B driver
+
+ESP_Panel *panel = nullptr;
+
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[800 * 20];  // 20-line draw buffer
+
+void my_disp_flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
+    panel->getLcd()->drawBitmap(area->x1, area->y1,
+                                area->x2 - area->x1 + 1,
+                                area->y2 - area->y1 + 1,
+                                (uint16_t *)color_p);
+    lv_disp_flush_ready(drv);
+}
+
+void setup() {
+    Serial.begin(115200);
+    panel = new ESP_Panel();
+    panel->init();
+    panel->begin();
+
+    lv_init();
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, 800 * 20);
+
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res  = 800;
+    disp_drv.ver_res  = 480;
+    disp_drv.flush_cb = my_disp_flush;
+    disp_drv.draw_buf = &draw_buf;
+    lv_disp_drv_register(&disp_drv);
+
+    // Draw a test label
+    lv_obj_t *label = lv_label_create(lv_scr_act());
+    lv_label_set_text(label, "NYC Metro Display - OK");
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+
+    Serial.println("Display init OK");
+}
+
+void loop() {
+    lv_timer_handler();
+    delay(5);
+}
+```
+
+**Expected result**: white screen with "NYC Metro Display - OK" centered. If you see
+this, the display, LVGL, and board are all working.
+
+### Step 2 — WiFi + API Test
+
+Once the display is working, verify WiFi and JSON fetching independently before
+combining with the UI:
+
+```cpp
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+const char* SSID     = "your-ssid";
+const char* PASSWORD = "your-password";
+const char* API_URL  = "http://YOUR_PC_IP:8000/api/eta";  // metro_api backend
+
+void setup() {
+    Serial.begin(115200);
+    WiFi.begin(SSID, PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    Serial.println("\nWiFi connected: " + WiFi.localIP().toString());
+
+    HTTPClient http;
+    http.begin(API_URL);
+    int code = http.GET();
+    if (code == 200) {
+        JsonDocument doc;
+        deserializeJson(doc, http.getString());
+        Serial.println("First N train ETA: " +
+            String(doc["stops"]["n_39th_ave"]["northbound"][0]["eta_min"].as<int>()) + " min");
+    } else {
+        Serial.println("HTTP error: " + String(code));
+    }
+    http.end();
+}
+
+void loop() {}
+```
+
+**Expected result**: Serial monitor prints the first N train ETA from your Python backend.
+
+### Step 3 — Serial Monitor Debugging
+
+- Open Serial Monitor at **115200 baud**
+- USB CDC mode (set above) means no separate UART adapter needed — just the USB-C cable
+- If the board doesn't appear as a COM/tty port, hold **BOOT button**, tap **RESET**, release BOOT
+
+### Common Issues
+
+| Symptom | Fix |
+|---|---|
+| Display white/blank after flash | Check PSRAM is set to `OPI PSRAM` in board config |
+| Board not detected as serial port | Enable `USB CDC On Boot` in board settings |
+| LVGL crashes or corrupts display | Reduce `LV_MEM_SIZE` or draw buffer size |
+| HTTP request fails | Confirm PC and ESP32 are on same WiFi network; check firewall |
+| Sketch too large | Switch partition scheme to `Huge APP` |
+
+---
+
 ## Open Items
 
 - [ ] Confirm GTFS stop IDs for all three stations via `find_stop_ids()`
-- [ ] Choose hardware board and order
-- [ ] Decide Option A vs Option B architecture
-- [ ] Implement `/api/eta` JSON endpoint in `metro_api` (if Option B)
+- [x] Choose hardware board — **Waveshare ESP32-S3-Touch-LCD-7B** selected
+- [x] Decide Option A vs Option B architecture — **Option B selected**
+- [ ] Implement `/api/eta` JSON endpoint in `metro_api`
 - [ ] Implement ESP32 sketch: WiFi connect, HTTP GET, JSON parse, LVGL render
 - [ ] Design LVGL layout (line color badges, ETA countdown, weather strip)
 - [ ] Set up OTA (over-the-air) firmware updates for convenience

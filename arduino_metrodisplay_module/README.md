@@ -14,7 +14,7 @@ for a fixed set of commute stops plus current weather conditions.
 | Spec | Detail |
 |---|---|
 | MCU | ESP32-S3R8 (dual-core 240MHz, 8MB PSRAM) |
-| Display | 7" IPS TFT, 800×480, capacitive 5-point touch |
+| Display | 7" IPS TFT, **1024×600**, capacitive 5-point touch |
 | Interface | RGB parallel (16-bit) — required for 7" at usable refresh rates |
 | WiFi | 802.11 b/g/n (2.4GHz) — built in |
 | USB | USB-C (programming + power) |
@@ -24,7 +24,7 @@ for a fixed set of commute stops plus current weather conditions.
 
 **Why this board:**
 - Best-documented 7" ESP32 option — Waveshare ships Arduino and ESP-IDF examples
-- ESP32-S3's PSRAM is essential: a 7" 800×480 16-bit framebuffer is ~750KB, which won't fit in internal SRAM alone
+- ESP32-S3's PSRAM is essential: a 7" 1024×600 16-bit framebuffer is ~750KB, which won't fit in internal SRAM alone
 - LVGL has a dedicated driver config for this board in the community examples
 - `esp_lcd` (ESP-IDF component, works in Arduino) handles the RGB panel driver natively
 - All-in-one: no wiring, no mismatch between display and controller
@@ -35,9 +35,9 @@ for a fixed set of commute stops plus current weather conditions.
 
 | Board | Size | Notes |
 |---|---|---|
-| Elecrow CrowPanel 7.0" ESP32 | 7" 800×480 | Similar spec, slightly cheaper, good LVGL support |
-| Sunton ESP32-S3 7" | 7" 800×480 | Budget AliExpress option, same community drivers |
-| Waveshare ESP32-S3-Touch-LCD-5B | 5" 800×480 | Drop-down if 7" feels too large; identical software |
+| Elecrow CrowPanel 7.0" ESP32 | 7" 1024×600 | Similar spec, slightly cheaper, good LVGL support |
+| Sunton ESP32-S3 7" | 7" 1024×600 | Budget AliExpress option, same community drivers |
+| Waveshare ESP32-S3-Touch-LCD-5B | 5" 1024×600 | Drop-down if 7" feels too large; identical software |
 
 ### UI Library
 
@@ -89,7 +89,7 @@ for a fixed set of commute stops plus current weather conditions.
 
 ---
 
-## Display Layout (800×480 — 7" screen)
+## Display Layout (1024×600 — 7" screen)
 
 ```
 +------------------+------------------+-------------------+
@@ -225,8 +225,8 @@ cp ~/Arduino/libraries/lvgl/lv_conf_template.h ~/Arduino/libraries/lv_conf.h
 Then in `lv_conf.h`, set:
 ```c
 #define LV_COLOR_DEPTH 16
-#define LV_HOR_RES_MAX 800
-#define LV_VER_RES_MAX 480
+#define LV_HOR_RES_MAX 1024
+#define LV_VER_RES_MAX 600
 #define LV_MEM_SIZE (512 * 1024U)   // 512KB — safe with PSRAM
 ```
 
@@ -243,13 +243,13 @@ adding any application logic:
 ESP_Panel *panel = nullptr;
 
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[800 * 20];  // 20-line draw buffer
+static lv_color_t buf[1024 * 20];  // 20-line draw buffer
 
 void my_disp_flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
     panel->getLcd()->drawBitmap(area->x1, area->y1,
-                                area->x2 - area->x1 + 1,
-                                area->y2 - area->y1 + 1,
-                                (uint16_t *)color_p);
+                                 area->x2 - area->x1 + 1,
+                                 area->y2 - area->y1 + 1,
+                                 (uint16_t *)color_p);
     lv_disp_flush_ready(drv);
 }
 
@@ -264,8 +264,8 @@ void setup() {
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res  = 800;
-    disp_drv.ver_res  = 480;
+    disp_drv.hor_res  = 1024;
+    disp_drv.ver_res  = 600;
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);

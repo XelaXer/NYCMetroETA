@@ -2,7 +2,7 @@ from nyct_gtfs import NYCTFeed
 # from google.transit import gtfs_realtime_pb2
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 """
 routes i care about
@@ -298,7 +298,7 @@ def calculate_journey_times():
             g_arrival = g_train['arrival_at_hoyt']
             if g_arrival:
                 # Find A/C trains departing after G train arrives (with 3-minute buffer)
-                buffer_time = g_arrival.replace(minute=g_arrival.minute + 3)
+                buffer_time = g_arrival + timedelta(minutes=3)
                 connecting_trains = [ac for ac in ac_trains if ac['departure_from_hoyt'] > buffer_time]
                 
                 if connecting_trains:

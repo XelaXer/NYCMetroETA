@@ -6,7 +6,9 @@ Run with:
     poetry run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import asyncio
 from datetime import datetime, timedelta
+from typing import Any
 
 import httpx
 from fastapi import FastAPI
@@ -40,6 +42,28 @@ WEATHER_URL = (
 )
 
 # ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+
+TRANSIT_TTL = timedelta(minutes=1)
+WEATHER_TTL = timedelta(minutes=3)
+
+_cache: dict[str, tuple[datetime, Any]] = {}
+
+
+def _cache_get(key: str, ttl: timedelta) -> Any | None:
+    if key in _cache:
+        ts, value = _cache[key]
+        if datetime.now() - ts < ttl:
+            return value
+    return None
+
+
+def _cache_set(key: str, value: Any) -> None:
+    _cache[key] = (datetime.now(), value)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -53,11 +77,10 @@ def _wind_direction(degrees: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Transit fetchers
+# Transit fetchers (blocking — run in executor to avoid blocking event loop)
 # ---------------------------------------------------------------------------
 
-def fetch_n_trains_39av(n: int = 3) -> dict:
-    """Next N trains at 39 Av in both directions."""
+def _fetch_n_trains_39av(n: int = 3) -> dict:
     feed = NYCTFeed("N")
     now = datetime.now()
     northbound, southbound = [], []
@@ -86,8 +109,7 @@ def fetch_n_trains_39av(n: int = 3) -> dict:
     return {"northbound": northbound[:n], "southbound": southbound[:n]}
 
 
-def fetch_e_trains_queens_plaza(n: int = 3) -> dict:
-    """Next E trains southbound at Queens Plaza."""
+def _fetch_e_trains_queens_plaza(n: int = 3) -> dict:
     feed = NYCTFeed("E")
     now = datetime.now()
     southbound = []
@@ -108,8 +130,7 @@ def fetch_e_trains_queens_plaza(n: int = 3) -> dict:
     return {"southbound": southbound[:n]}
 
 
-def fetch_7_trains_queensboro(n: int = 3) -> dict:
-    """Next 7 trains westbound (downtown) at Queensboro Plaza."""
+def _fetch_7_trains_queensboro(n: int = 3) -> dict:
     feed = NYCTFeed("7")
     now = datetime.now()
     westbound = []
@@ -130,8 +151,11 @@ def fetch_7_trains_queensboro(n: int = 3) -> dict:
     return {"westbound": westbound[:n]}
 
 
-async def fetch_weather() -> dict:
-    """Current conditions + daily high/low/precip from Open-Meteo (no API key needed)."""
+# ---------------------------------------------------------------------------
+# Weather fetcher (already async)
+# ---------------------------------------------------------------------------
+
+async def _fetch_weather() -> dict:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(WEATHER_URL)
         r.raise_for_status()
@@ -151,30 +175,62 @@ async def fetch_weather() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Cached accessors
+# ---------------------------------------------------------------------------
+
+async def get_transit() -> dict:
+    cached = _cache_get("transit", TRANSIT_TTL)
+    if cached is not None:
+        return cached
+
+    loop = asyncio.get_event_loop()
+    n, e, seven = await asyncio.gather(
+        loop.run_in_executor(None, _fetch_n_trains_39av),
+        loop.run_in_executor(None, _fetch_e_trains_queens_plaza),
+        loop.run_in_executor(None, _fetch_7_trains_queensboro),
+    )
+
+    result = {"n_39th_ave": n, "e_queens_plaza": e, "seven_queensboro": seven}
+    _cache_set("transit", result)
+    return result
+
+
+async def get_weather() -> dict:
+    cached = _cache_get("weather", WEATHER_TTL)
+    if cached is not None:
+        return cached
+
+    result = await _fetch_weather()
+    _cache_set("weather", result)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @app.get("/api/eta")
 async def get_eta():
     """
-    Single endpoint polled by the Arduino display every 30 seconds.
-    Transit data is fetched synchronously (nyct-gtfs is blocking);
-    weather is fetched async. Both run on every request — add caching
-    here if you want to reduce upstream calls.
+    Polled by the Arduino display every 30 seconds.
+    Transit data cached for 1 minute, weather cached for 3 minutes.
+    All three MTA feed fetches run concurrently in a thread pool.
     """
-    weather = await fetch_weather()
+    stops, weather = await asyncio.gather(get_transit(), get_weather())
 
     return {
         "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "stops": {
-            "n_39th_ave": fetch_n_trains_39av(3),
-            "e_queens_plaza": fetch_e_trains_queens_plaza(3),
-            "seven_queensboro": fetch_7_trains_queensboro(3),
-        },
+        "stops": stops,
         "weather": weather,
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "time": datetime.now().isoformat(timespec="seconds")}
+    cached_transit = "transit" in _cache
+    cached_weather = "weather" in _cache
+    return {
+        "status": "ok",
+        "time": datetime.now().isoformat(timespec="seconds"),
+        "cache": {"transit": cached_transit, "weather": cached_weather},
+    }

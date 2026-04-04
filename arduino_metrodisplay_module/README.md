@@ -260,7 +260,7 @@ void setup() {
     panel->begin();
 
     lv_init();
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, 800 * 20);
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, 1024 * 20);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
@@ -344,12 +344,22 @@ void loop() {}
 
 ---
 
-## Open Items
+## Status & Next Steps
 
-- [ ] Confirm GTFS stop IDs for all three stations via `find_stop_ids()`
-- [x] Choose hardware board — **Waveshare ESP32-S3-Touch-LCD-7B** selected
-- [x] Decide Option A vs Option B architecture — **Option B selected**
-- [ ] Implement `/api/eta` JSON endpoint in `metro_api`
-- [ ] Implement ESP32 sketch: WiFi connect, HTTP GET, JSON parse, LVGL render
-- [ ] Design LVGL layout (line color badges, ETA countdown, weather strip)
-- [ ] Set up OTA (over-the-air) firmware updates for convenience
+### Done
+- [x] Hardware selected — Waveshare ESP32-S3-Touch-LCD-7B (1024×600)
+- [x] Architecture decided — Option B (Python backend → JSON → ESP32)
+- [x] `/api/eta` endpoint implemented in `metro_api` (see `metro_api/README.md`)
+- [x] Display resolution, LVGL config, and test sketches documented above
+
+### Next — Arduino side
+- [ ] **Step 1**: Flash smoke test sketch, confirm display lights up
+- [ ] **Step 2**: Flash WiFi+API test sketch, confirm JSON reaches the board over serial
+- [ ] **Step 3**: Verify GTFS stop IDs return real data (`poetry run python -m scripts.test`)
+- [ ] **Step 4**: Build main sketch — WiFi connect, 30s poll loop, JSON parse
+- [ ] **Step 5**: LVGL layout — 3-column train panels + weather strip, MTA line color badges
+- [ ] **Step 6**: OTA firmware updates (nice-to-have, avoids USB reflash for tweaks)
+
+### Next — Backend side
+- [ ] Run as a systemd service so it survives reboots
+- [ ] Add `config.py` / `.env` for WiFi credentials and any future API keys

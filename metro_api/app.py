@@ -1,35 +1,42 @@
 """
 NYC Metro ETA — FastAPI backend
-Serves /api/eta with real-time train ETAs and current weather for the Arduino display.
+Serves POST /api/eta with real-time train ETAs and current weather for the Arduino display.
+The Arduino sends its stop config as the request body; the API fetches only those stops.
 
 Run with:
     poetry run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+
+curl test:
+    curl -s -X POST http://localhost:8000/api/eta \
+      -H "Content-Type: application/json" \
+      -d @../arduino_metrodisplay_module/config.json | python3 -m json.tool
 """
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
 from fastapi import FastAPI
 from nyct_gtfs import NYCTFeed
+from pydantic import BaseModel
 
 app = FastAPI(title="NYC Metro ETA")
 
-# ---------------------------------------------------------------------------
-# Stop IDs (MTA GTFS static data — verify via scripts/test.py find_stop_ids
-# if any stop appears to return no results)
-# ---------------------------------------------------------------------------
-
-# N/W line — 39 Av, Astoria (Queens)
-N_39AV_NORTHBOUND = "R11N"   # toward Astoria-Ditmars Blvd
-N_39AV_SOUTHBOUND = "R11S"   # toward Manhattan / Coney Island
-
-# E/M/R line — Queens Plaza (Queens)
-E_QUEENS_PLAZA_S = "G08S"    # southbound toward World Trade Center
-
-# 7 line — Queensboro Plaza (Queens)
-SEVEN_QUEENSBORO_S = "723S"  # westbound toward Hudson Yards
+# MTA official hex colors per route
+LINE_COLORS = {
+    "1": "EE352E", "2": "EE352E", "3": "EE352E",
+    "4": "00933C", "5": "00933C", "6": "00933C",
+    "7": "B933AD",
+    "A": "0039A6", "C": "0039A6", "E": "0039A6",
+    "B": "FF6319", "D": "FF6319", "F": "FF6319", "M": "FF6319",
+    "G": "6CBE45",
+    "J": "996633", "Z": "996633",
+    "L": "A7A9AC",
+    "N": "FCCC0A", "Q": "FCCC0A", "R": "FCCC0A", "W": "FCCC0A",
+    "SI": "0039A6",
+}
 
 # Open-Meteo — Long Island City / Astoria, Queens
 WEATHER_URL = (
@@ -40,6 +47,22 @@ WEATHER_URL = (
     "&temperature_unit=fahrenheit&wind_speed_unit=mph"
     "&timezone=America%2FNew_York&forecast_days=1"
 )
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+
+class DirectionConfig(BaseModel):
+    label: str
+    stop_id: str  # full GTFS stop ID including direction suffix (e.g. "R08N")
+
+class StopConfig(BaseModel):
+    feeds: list[str]
+    label: str
+    directions: list[DirectionConfig]
+
+class ETARequest(BaseModel):
+    stops: list[StopConfig]
 
 # ---------------------------------------------------------------------------
 # Cache
@@ -77,82 +100,45 @@ def _wind_direction(degrees: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Transit fetchers (blocking — run in executor to avoid blocking event loop)
+# Transit fetcher (blocking — run in executor)
 # ---------------------------------------------------------------------------
 
-def _fetch_n_trains_39av(n: int = 3) -> dict:
-    feed = NYCTFeed("N")
+def _fetch_stop(stop: StopConfig, n: int = 3) -> dict:
     now = datetime.now()
-    northbound, southbound = [], []
 
-    for trip in feed.trips:
-        if trip.route_id != "N":
-            continue
-        for stop in trip.stop_time_updates:
-            if stop.stop_id == N_39AV_NORTHBOUND and stop.departure and stop.departure > now:
-                northbound.append({
-                    "line": "N",
-                    "destination": trip.headsign_text,
-                    "eta_min": _eta_minutes(stop.departure),
-                })
-                break
-            if stop.stop_id == N_39AV_SOUTHBOUND and stop.departure and stop.departure > now:
-                southbound.append({
-                    "line": "N",
-                    "destination": trip.headsign_text,
-                    "eta_min": _eta_minutes(stop.departure),
-                })
-                break
+    stop_id_to_dir = {d.stop_id: d.label for d in stop.directions}
+    buckets: dict[str, list] = {d.label: [] for d in stop.directions}
 
-    northbound.sort(key=lambda x: x["eta_min"])
-    southbound.sort(key=lambda x: x["eta_min"])
-    return {"northbound": northbound[:n], "southbound": southbound[:n]}
+    for feed_id in stop.feeds:
+        feed = NYCTFeed(feed_id)
+        for trip in feed.trips:
+            for stop_time in trip.stop_time_updates:
+                if stop_time.stop_id in stop_id_to_dir and stop_time.departure and stop_time.departure > now:
+                    direction = stop_id_to_dir[stop_time.stop_id]
+                    buckets[direction].append({
+                        "line": trip.route_id,
+                        "color": LINE_COLORS.get(trip.route_id, "888888"),
+                        "dest": trip.headsign_text,
+                        "eta_min": _eta_minutes(stop_time.departure),
+                        "trip_id": trip.trip_id,
+                    })
+                    break  # one departure per trip
 
+    for label in buckets:
+        buckets[label].sort(key=lambda x: x["eta_min"])
+        buckets[label] = buckets[label][:n]
 
-def _fetch_e_trains_queens_plaza(n: int = 3) -> dict:
-    feed = NYCTFeed("E")
-    now = datetime.now()
-    southbound = []
-
-    for trip in feed.trips:
-        if trip.route_id != "E":
-            continue
-        for stop in trip.stop_time_updates:
-            if stop.stop_id == E_QUEENS_PLAZA_S and stop.departure and stop.departure > now:
-                southbound.append({
-                    "line": "E",
-                    "destination": trip.headsign_text,
-                    "eta_min": _eta_minutes(stop.departure),
-                })
-                break
-
-    southbound.sort(key=lambda x: x["eta_min"])
-    return {"southbound": southbound[:n]}
-
-
-def _fetch_7_trains_queensboro(n: int = 3) -> dict:
-    feed = NYCTFeed("7")
-    now = datetime.now()
-    westbound = []
-
-    for trip in feed.trips:
-        if trip.route_id != "7":
-            continue
-        for stop in trip.stop_time_updates:
-            if stop.stop_id == SEVEN_QUEENSBORO_S and stop.departure and stop.departure > now:
-                westbound.append({
-                    "line": "7",
-                    "destination": trip.headsign_text,
-                    "eta_min": _eta_minutes(stop.departure),
-                })
-                break
-
-    westbound.sort(key=lambda x: x["eta_min"])
-    return {"westbound": westbound[:n]}
+    return {
+        "label": stop.label,
+        "directions": [
+            {"label": label, "trains": trains}
+            for label, trains in buckets.items()
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
-# Weather fetcher (already async)
+# Weather fetcher (async)
 # ---------------------------------------------------------------------------
 
 async def _fetch_weather() -> dict:
@@ -178,20 +164,20 @@ async def _fetch_weather() -> dict:
 # Cached accessors
 # ---------------------------------------------------------------------------
 
-async def get_transit() -> dict:
-    cached = _cache_get("transit", TRANSIT_TTL)
+async def get_transit(request: ETARequest) -> list:
+    cache_key = "transit_" + hashlib.md5(request.model_dump_json().encode()).hexdigest()
+    cached = _cache_get(cache_key, TRANSIT_TTL)
     if cached is not None:
         return cached
 
     loop = asyncio.get_event_loop()
-    n, e, seven = await asyncio.gather(
-        loop.run_in_executor(None, _fetch_n_trains_39av),
-        loop.run_in_executor(None, _fetch_e_trains_queens_plaza),
-        loop.run_in_executor(None, _fetch_7_trains_queensboro),
-    )
+    results = await asyncio.gather(*[
+        loop.run_in_executor(None, _fetch_stop, stop)
+        for stop in request.stops
+    ])
 
-    result = {"n_39th_ave": n, "e_queens_plaza": e, "seven_queensboro": seven}
-    _cache_set("transit", result)
+    result = list(results)
+    _cache_set(cache_key, result)
     return result
 
 
@@ -209,14 +195,15 @@ async def get_weather() -> dict:
 # Routes
 # ---------------------------------------------------------------------------
 
-@app.get("/api/eta")
-async def get_eta():
+@app.post("/api/eta")
+async def get_eta(request: ETARequest):
     """
     Polled by the Arduino display every 30 seconds.
-    Transit data cached for 1 minute, weather cached for 3 minutes.
-    All three MTA feed fetches run concurrently in a thread pool.
+    Body: JSON config listing stops and directions to fetch.
+    Transit data cached 1 min per unique config, weather cached 3 min.
+    All stop feed fetches run concurrently in a thread pool.
     """
-    stops, weather = await asyncio.gather(get_transit(), get_weather())
+    stops, weather = await asyncio.gather(get_transit(request), get_weather())
 
     return {
         "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -227,7 +214,7 @@ async def get_eta():
 
 @app.get("/health")
 def health():
-    cached_transit = "transit" in _cache
+    cached_transit = any(k.startswith("transit_") for k in _cache)
     cached_weather = "weather" in _cache
     return {
         "status": "ok",

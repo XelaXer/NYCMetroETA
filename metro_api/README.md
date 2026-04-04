@@ -6,6 +6,7 @@ for the Arduino display.
 ## Running
 
 ```bash
+cd metro_api
 poetry install
 poetry run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -17,42 +18,105 @@ poetry run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/eta` | Full payload: transit ETAs + weather. This is what the Arduino polls. |
+| `POST /api/eta` | Full payload: transit ETAs + weather. This is what the Arduino polls. |
 | `GET /health` | Uptime check + cache warm/cold state |
 | `GET /docs` | Auto-generated Swagger UI (FastAPI built-in) |
+
+## curl examples
+
+Using the Arduino config file as the request body:
+```bash
+curl -s -X POST http://localhost:8000/api/eta \
+  -H "Content-Type: application/json" \
+  -d @../arduino_metrodisplay_module/config.json | jq
+```
+
+Just the stops:
+```bash
+curl -s -X POST http://localhost:8000/api/eta \
+  -H "Content-Type: application/json" \
+  -d @../arduino_metrodisplay_module/config.json | jq .stops
+```
+
+Just the first stop's northbound trains:
+```bash
+curl -s -X POST http://localhost:8000/api/eta \
+  -H "Content-Type: application/json" \
+  -d @../arduino_metrodisplay_module/config.json | jq '.stops[0].directions[0].trains'
+```
+
+Health check:
+```bash
+curl http://localhost:8000/health
+```
+
+## Request body
+
+The Arduino POSTs its stop config on every poll. Stop config is defined in
+`../arduino_metrodisplay_module/config.json` and flashed to the device.
+
+```json
+{
+  "stops": [
+    {
+      "feed": "N",
+      "label": "39 Av",
+      "directions": [
+        { "label": "northbound", "stop_id": "R08N" },
+        { "label": "southbound", "stop_id": "R08S" }
+      ]
+    }
+  ]
+}
+```
+
+- `feed` — MTA feed identifier passed to NYCTFeed
+- `label` — display name for the stop (shown on the Arduino UI)
+- `stop_id` — full GTFS stop ID including direction suffix (e.g. `R08N`, `R08S`)
 
 ## Response shape
 
 ```json
 {
-  "updated_at": "2026-04-04T09:15:00",
-  "stops": {
-    "n_39th_ave": {
-      "northbound": [
-        { "line": "N", "destination": "Astoria-Ditmars Blvd", "eta_min": 3 }
-      ],
-      "southbound": [
-        { "line": "N", "destination": "Coney Island", "eta_min": 5 }
+  "updated_at": "2026-04-03T23:07:00",
+  "stops": [
+    {
+      "label": "39 Av",
+      "directions": [
+        {
+          "label": "northbound",
+          "trains": [
+            { "line": "N", "color": "FCCC0A", "dest": "Astoria-Ditmars Blvd", "eta_min": 3, "trip_id": "133250_N..N31R" },
+            { "line": "N", "color": "FCCC0A", "dest": "Astoria-Ditmars Blvd", "eta_min": 9, "trip_id": "135050_N..N20R" }
+          ]
+        },
+        {
+          "label": "southbound",
+          "trains": [
+            { "line": "N", "color": "FCCC0A", "dest": "Coney Island-Stillwell Av", "eta_min": 5, "trip_id": "141550_N..S20R" }
+          ]
+        }
       ]
     },
-    "e_queens_plaza": {
-      "southbound": [
-        { "line": "E", "destination": "World Trade Center", "eta_min": 2 }
-      ]
-    },
-    "seven_queensboro": {
-      "westbound": [
-        { "line": "7", "destination": "Hudson Yards", "eta_min": 1 }
+    {
+      "label": "Queens Plaza",
+      "directions": [
+        {
+          "label": "southbound",
+          "trains": [
+            { "line": "E", "color": "0039A6", "dest": "World Trade Center", "eta_min": 2, "trip_id": "139400_E..S04R" }
+          ]
+        }
       ]
     }
-  },
+  ],
   "weather": {
-    "current_temp_f": 54,
-    "high_f": 61,
-    "low_f": 48,
-    "rain_chance_pct": 20,
-    "wind_mph": 9,
-    "wind_dir": "NW"
+    "current_temp_f": 57,
+    "high_f": 65,
+    "low_f": 41,
+    "rain_chance_pct": 3,
+    "wind_mph": 4,
+    "wind_dir": "S"
   }
 }
 ```
@@ -61,35 +125,17 @@ poetry run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 
 | Data | TTL |
 |---|---|
-| Transit (all stops) | 1 minute |
+| Transit (per unique config) | 1 minute |
 | Weather | 3 minutes |
 
-Cache is in-memory — it resets on server restart. The three MTA feed fetches
-run concurrently in a thread pool (nyct-gtfs is blocking), so a cold cache miss
-takes ~600ms instead of ~1800ms.
-
-## Stop IDs
-
-Hardcoded in `app.py`. Based on MTA GTFS static data — verify against live
-feeds if any stop returns empty results:
-
-```bash
-poetry run python -m scripts.test
-```
-
-`find_stop_ids()` in `scripts/test.py` will scan live feeds and print stop IDs
-by name, so you can cross-check the constants in `app.py`.
-
-| Constant | Value | Stop |
-|---|---|---|
-| `N_39AV_NORTHBOUND` | `R11N` | 39 Av → Astoria-Ditmars Blvd |
-| `N_39AV_SOUTHBOUND` | `R11S` | 39 Av → Manhattan |
-| `E_QUEENS_PLAZA_S` | `G08S` | Queens Plaza → WTC |
-| `SEVEN_QUEENSBORO_S` | `723S` | Queensboro Plaza → Hudson Yards |
+Cache is in-memory — resets on server restart. Transit cache is keyed by a hash
+of the request body, so different configs get independent cache entries. All stop
+feed fetches run concurrently in a thread pool (nyct-gtfs is blocking), so a
+cold cache miss takes ~600ms instead of ~1800ms per stop.
 
 ## Development scripts
 
 ```bash
-# Explore live feed data and verify stop IDs
+# Verify stop IDs return real live data
 poetry run python -m scripts.test
 ```

@@ -7,39 +7,52 @@ and serves a JSON API consumed by an ESP32-based physical display unit.
 
 ```
 NYCMetroETA/
-├── metro_api/                  # Python backend (FastAPI)
-│   ├── app.py                  # API server — run this
+├── .github/workflows/
+│   └── test.yml                  # CI: runs pytest on push/PR
+│
+├── metro_api/                    # Python backend (FastAPI)
+│   ├── app.py                    # API server — run this
+│   ├── tests/                    # pytest suite
 │   ├── scripts/
-│   │   └── test.py             # Dev/debug script for feed exploration
+│   │   └── explore_feed.py       # Dev tool: inspect raw MTA feed data
 │   ├── pyproject.toml
 │   └── README.md
 │
 └── arduino_metrodisplay_module/  # ESP32 display firmware
-    └── README.md               # Hardware requirements + setup guide
+    ├── config.json               # Stop config — flashed to device, POSTed on each poll
+    └── README.md                 # Hardware requirements + setup guide
 ```
 
 ## How it works
 
 ```
-MTA GTFS-RT feeds ──► metro_api/app.py ──► GET /api/eta (JSON) ──► ESP32 display
-Open-Meteo weather ──►       │
-                             └── in-memory TTL cache
-                                  transit: 1 min
-                                  weather: 3 min
+Arduino config.json ──► POST /api/eta ──► ESP32 display renders
+                              │
+              ┌───────────────┴──────────────┐
+         MTA GTFS-RT feeds          Open-Meteo weather
+              │                              │
+         NYCTFeed parser              httpx async fetch
+              └───────────────┬──────────────┘
+                        TTL cache
+                    transit: 1 min
+                    weather: 3 min
 ```
 
-The Python backend fetches live protobuf feeds from the MTA, parses upcoming
-departures for three Queens stops, and exposes a single clean JSON endpoint.
-The ESP32 polls that endpoint every 30 seconds and renders the result on a
-7" touchscreen via LVGL.
+The Arduino POSTs its stop config on every poll. The API fetches only the
+requested stops from MTA GTFS-RT feeds, attaches MTA line colors and trip IDs,
+and returns a clean JSON array. The ESP32 iterates the response and renders each
+stop and direction dynamically — nothing is hardcoded in firmware beyond the
+config file.
 
-## Stops tracked
+## Stops (defined in `arduino_metrodisplay_module/config.json`)
 
-| Line | Station | Direction |
-|---|---|---|
-| N | 39 Av (Astoria) | Both — northbound to Ditmars, southbound to Manhattan |
-| E | Queens Plaza | Southbound to WTC |
-| 7 | Queensboro Plaza | Westbound to Hudson Yards |
+| Station | Feed | Lines | Directions |
+|---|---|---|---|
+| 39 Av | N | N, W | northbound (Ditmars), southbound (Manhattan) |
+| Queens Plaza | E + N | E, R | southbound (WTC) |
+| Queensboro Plaza | 7 + N | 7, N, W | westbound (Hudson Yards), northbound (Ditmars), southbound (Manhattan) |
+
+To add or change stops: edit `config.json` and reflash. No API changes needed.
 
 ## Quick start — Python backend
 
@@ -49,8 +62,19 @@ poetry install
 poetry run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Then open `http://localhost:8000/api/eta` to verify the JSON response,
-or `http://localhost:8000/health` to check cache state.
+Test with the Arduino config:
+```bash
+curl -s -X POST http://localhost:8000/api/eta \
+  -H "Content-Type: application/json" \
+  -d @arduino_metrodisplay_module/config.json | jq
+```
+
+## Running tests
+
+```bash
+cd metro_api
+poetry run pytest -v
+```
 
 ## Hardware
 
@@ -60,15 +84,19 @@ setup guide.
 
 ## What's done / what's next
 
-See `arduino_metrodisplay_module/README.md` for Arduino-side status.
-
 **Backend (metro_api)**
-- [x] GTFS-RT feed parsing for G/A/C (original route)
-- [x] FastAPI server with `/api/eta` and `/health`
-- [x] N at 39 Av, E at Queens Plaza, 7 at Queensboro Plaza
+- [x] FastAPI server with `POST /api/eta` and `GET /health`
+- [x] MTA GTFS-RT feed parsing — N/Q/R/W, E/A/C, 7
+- [x] Stops: 39 Av (N/W), Queens Plaza (E/R), Queensboro Plaza (7/N/W)
+- [x] MTA line colors per departure (`color` hex field)
+- [x] Trip IDs per departure (enables partial re-renders on Arduino)
 - [x] Open-Meteo weather (temp, high/low, rain, wind)
 - [x] TTL cache (transit 1 min, weather 3 min)
-- [x] Concurrent feed fetching (non-blocking)
-- [ ] Verify stop IDs live — run `poetry run python -m scripts.test` and check output
-- [ ] Add `.env` / `config.py` for WiFi credentials and any future API keys
+- [x] Concurrent feed fetching (thread pool)
+- [x] Dynamic stop config — stops defined in `config.json`, not hardcoded in API
+- [x] pytest suite + GitHub Actions CI
+- [ ] Add `.env` / `config.py` for any future API keys
 - [ ] Consider running as a systemd service for always-on hosting
+
+**Arduino (arduino_metrodisplay_module)**
+- See `arduino_metrodisplay_module/README.md`

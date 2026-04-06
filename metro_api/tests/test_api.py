@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,7 +42,7 @@ MOCK_WEATHER_DATA = {
 def make_mock_feed(stop_id: str, route_id: str, eta_minutes: int):
     stop_time = MagicMock()
     stop_time.stop_id = stop_id
-    stop_time.departure = datetime.now() + timedelta(minutes=eta_minutes)
+    stop_time.departure = datetime.now() + timedelta(minutes=eta_minutes, seconds=30)
 
     trip = MagicMock()
     trip.route_id = route_id
@@ -112,6 +113,8 @@ async def test_eta_train_fields(mock_feed, mock_weather):
     assert train["color"] == LINE_COLORS["N"]
     assert train["dest"] == "Astoria-Ditmars Blvd"
     assert train["eta_min"] == 5
+    assert "departs_at" in train
+    assert re.match(r"^\d{2}:\d{2}$", train["departs_at"])
     assert "trip_id" in train
 
 
@@ -213,7 +216,7 @@ def test_health():
 def _trip(stop_id: str, route_id: str, eta_minutes: int) -> MagicMock:
     stop_time = MagicMock()
     stop_time.stop_id = stop_id
-    stop_time.departure = datetime.now() + timedelta(minutes=eta_minutes)
+    stop_time.departure = datetime.now() + timedelta(minutes=eta_minutes, seconds=30)
 
     trip = MagicMock()
     trip.route_id = route_id

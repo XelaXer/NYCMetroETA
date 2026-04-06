@@ -4,8 +4,8 @@ from app import _eta_minutes, _wind_direction
 
 
 def test_eta_minutes_future():
-    future = datetime.now() + timedelta(minutes=5)
-    assert _eta_minutes(future) == 5
+    future = datetime.now() + timedelta(minutes=5, seconds=30)
+    assert _eta_minutes(future) == 5  # floor: 5.5 min → 5, not 6
 
 
 def test_eta_minutes_past_clamps_to_zero():

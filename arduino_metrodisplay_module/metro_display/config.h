@@ -38,6 +38,13 @@ const char* CONFIG_JSON = R"({
         {"label": "northbound", "stop_id": "R09N"},
         {"label": "southbound", "stop_id": "R09S"}
       ]
+    },
+    {
+      "feeds": ["G"],
+      "label": "Court Square",
+      "directions": [
+        {"label": "southbound", "stop_id": "G22S"}
+      ]
     }
   ]
 })";

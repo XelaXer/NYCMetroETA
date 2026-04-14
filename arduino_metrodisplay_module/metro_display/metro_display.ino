@@ -21,12 +21,14 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <lvgl.h>
 
 #include "config.h"
 #include "display.h"
+#include "lvgl_port.h"
 #include "ui.h"
 
 #define POLL_INTERVAL_MS   30000
@@ -44,11 +46,17 @@ static void wifi_connect() {
     Serial.printf("WiFi: connecting to %s\n", WIFI_SSID);
     ui_set_status("Connecting to WiFi...");
 
+    WiFi.disconnect(true);
+    delay(100);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     uint32_t start = millis();
+    uint32_t last_dot = 0;
     while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) {
-        lv_timer_handler();
+        if (millis() - last_dot >= 1000) {
+            Serial.printf("  WiFi status=%d  (%lums)\n", WiFi.status(), millis() - start);
+            last_dot = millis();
+        }
         delay(10);
     }
 
@@ -70,14 +78,18 @@ static void fetch_and_render() {
     }
 
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d%s", API_HOST, API_PORT, API_PATH);
+    snprintf(url, sizeof(url), "https://%s:%d%s", API_HOST, API_PORT, API_PATH);
 
+    Serial.printf("fetch: POST %s\n", url);
+    WiFiClientSecure client;
+    client.setInsecure();  // skip cert verification for internal cert
     HTTPClient http;
-    http.begin(url);
+    http.begin(client, url);
     http.addHeader("Content-Type", "application/json");
     http.setTimeout(HTTP_TIMEOUT_MS);
 
     int code = http.POST((uint8_t*)CONFIG_JSON, strlen(CONFIG_JSON));
+    Serial.printf("fetch: response code=%d\n", code);
 
     if (code != 200) {
         Serial.printf("fetch: HTTP %d from %s\n", code, url);
@@ -105,24 +117,35 @@ static void fetch_and_render() {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("\nNYC Metro Display — boot");
+    delay(500);  // let serial settle
+    Serial.println("\n\n=== NYC Metro Display — boot ===");
 
+    Serial.println("setup: display_init...");
     display_init();
-    ui_init();
+    Serial.println("setup: display_init OK");
 
+    Serial.println("setup: ui_init...");
+    if (lvgl_port_lock(-1)) {
+        ui_init();
+        lvgl_port_unlock();
+    }
+    Serial.println("setup: ui_init OK");
+
+    Serial.println("setup: wifi_connect...");
     wifi_connect();
+    Serial.printf("setup: wifi done, status=%d\n", WiFi.status());
 
     if (WiFi.status() == WL_CONNECTED) {
         ui_set_status("Fetching trains...");
+        Serial.println("setup: fetch_and_render...");
         fetch_and_render();
     }
 
     _last_poll = millis();
+    Serial.println("setup: complete");
 }
 
 void loop() {
-    lv_timer_handler();
-
     // Reconnect if WiFi dropped
     if (WiFi.status() != WL_CONNECTED) {
         if (_wifi_connected) {

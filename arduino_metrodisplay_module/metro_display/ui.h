@@ -206,15 +206,18 @@ void ui_init() {
 // ─── Status overlay ───────────────────────────────────────────────────────────
 
 void ui_set_status(const char* msg) {
-    lv_label_set_text(_status_lbl, msg);
-    lv_obj_clear_flag(_status_lbl, LV_OBJ_FLAG_HIDDEN);
-    lv_timer_handler();   // flush before any blocking operation
-    lv_timer_handler();
+    if (lvgl_port_lock(100)) {
+        lv_label_set_text(_status_lbl, msg);
+        lv_obj_clear_flag(_status_lbl, LV_OBJ_FLAG_HIDDEN);
+        lvgl_port_unlock();
+    }
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
 
 void ui_update(JsonDocument& doc) {
+    if (!lvgl_port_lock(500)) return;
+
     // Hide status overlay once we have real data
     lv_obj_add_flag(_status_lbl, LV_OBJ_FLAG_HIDDEN);
 
@@ -278,4 +281,5 @@ void ui_update(JsonDocument& doc) {
     }
 
     Serial.printf("ui: updated (%d stops)\n", col);
+    lvgl_port_unlock();
 }

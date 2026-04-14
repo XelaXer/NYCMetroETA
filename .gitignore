@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 .python-version
 .pytest_cache/
+
+# Arduino local config — copy config.example.h → config.h and fill in your values
+arduino_metrodisplay_module/metro_display/config.h

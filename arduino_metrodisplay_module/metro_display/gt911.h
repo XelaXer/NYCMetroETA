@@ -13,6 +13,8 @@
  * reading functions.
  */
 
+#pragma once
+
 #include "touch.h"
 
 /**

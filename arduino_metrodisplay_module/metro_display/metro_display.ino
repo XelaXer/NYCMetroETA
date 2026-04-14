@@ -21,6 +21,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <lvgl.h>
@@ -77,11 +78,13 @@ static void fetch_and_render() {
     }
 
     char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d%s", API_HOST, API_PORT, API_PATH);
+    snprintf(url, sizeof(url), "https://%s:%d%s", API_HOST, API_PORT, API_PATH);
 
     Serial.printf("fetch: POST %s\n", url);
+    WiFiClientSecure client;
+    client.setInsecure();  // skip cert verification for internal cert
     HTTPClient http;
-    http.begin(url);
+    http.begin(client, url);
     http.addHeader("Content-Type", "application/json");
     http.setTimeout(HTTP_TIMEOUT_MS);
 

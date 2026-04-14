@@ -1,7 +1,7 @@
 #pragma once
 
 // ─── WiFi ─────────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "XelaXer";
+const char* WIFI_SSID     = "NordNet";
 const char* WIFI_PASSWORD = "@Skunkworks7171";
 
 // ─── API ──────────────────────────────────────────────────────────────────────

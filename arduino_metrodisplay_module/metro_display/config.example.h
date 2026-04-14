@@ -1,13 +1,13 @@
 #pragma once
 
 // ─── WiFi ─────────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "NordNet";
-const char* WIFI_PASSWORD = "@Skunkworks7171";
+const char* WIFI_SSID     = "your-ssid";
+const char* WIFI_PASSWORD = "your-password";
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 // IP of the machine running metro_api. Must be on the same network as the ESP32.
-const char* API_HOST = "metro.internal.nyc.xelaxer.com";
-const int   API_PORT = 443;
+const char* API_HOST = "192.168.1.xxx";
+const int   API_PORT = 8000;
 const char* API_PATH = "/api/eta";
 
 // ─── Stop config ──────────────────────────────────────────────────────────────

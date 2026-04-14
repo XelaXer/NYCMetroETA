@@ -14,6 +14,7 @@ curl test:
 
 import asyncio
 import hashlib
+import math
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -91,7 +92,7 @@ def _cache_set(key: str, value: Any) -> None:
 # ---------------------------------------------------------------------------
 
 def _eta_minutes(t: datetime) -> int:
-    return max(0, round((t - datetime.now()).total_seconds() / 60))
+    return max(0, math.floor((t - datetime.now()).total_seconds() / 60))
 
 
 def _wind_direction(degrees: float) -> str:
@@ -120,6 +121,7 @@ def _fetch_stop(stop: StopConfig, n: int = 3) -> dict:
                         "color": LINE_COLORS.get(trip.route_id, "888888"),
                         "dest": trip.headsign_text,
                         "eta_min": _eta_minutes(stop_time.departure),
+                        "departs_at": stop_time.departure.strftime("%H:%M"),
                         "trip_id": trip.trip_id,
                     })
                     break  # one departure per trip

@@ -1,365 +1,183 @@
-# NYC Metro Display Module — Requirements
+# NYC Metro Display — Arduino
 
-A standalone ESP32-based physical display unit that shows real-time subway ETAs
-for a fixed set of commute stops plus current weather conditions.
+ESP32-S3 firmware for the 7" subway ETA display. Polls the `metro_api` backend
+every 30 seconds, parses the JSON response, and renders train ETAs + weather
+via LVGL.
 
 ---
 
-## Hardware Target
+## Hardware
 
-### Selected Board — Waveshare ESP32-S3-Touch-LCD-7B
-
-**The recommended board for this project.**
+**Waveshare ESP32-S3-Touch-LCD-7B**
 
 | Spec | Detail |
 |---|---|
-| MCU | ESP32-S3R8 (dual-core 240MHz, 8MB PSRAM) |
-| Display | 7" IPS TFT, **1024×600**, capacitive 5-point touch |
-| Interface | RGB parallel (16-bit) — required for 7" at usable refresh rates |
-| WiFi | 802.11 b/g/n (2.4GHz) — built in |
-| USB | USB-C (programming + power) |
-| Storage | MicroSD card slot |
-| Power | USB-C or LiPo battery connector |
-| Price | ~$45–55 (Waveshare official store or AliExpress) |
+| MCU | ESP32-S3R8 — dual-core 240MHz, 8MB PSRAM |
+| Display | 7" IPS TFT, 1024×600, RGB parallel 16-bit |
+| Touch | Capacitive 5-point (not used for UI interaction) |
+| WiFi | 802.11 b/g/n 2.4GHz |
+| USB | USB-C — programming + power + Serial |
 
-**Why this board:**
-- Best-documented 7" ESP32 option — Waveshare ships Arduino and ESP-IDF examples
-- ESP32-S3's PSRAM is essential: a 7" 1024×600 16-bit framebuffer is ~750KB, which won't fit in internal SRAM alone
-- LVGL has a dedicated driver config for this board in the community examples
-- `esp_lcd` (ESP-IDF component, works in Arduino) handles the RGB panel driver natively
-- All-in-one: no wiring, no mismatch between display and controller
+The 8MB PSRAM is required: a 1024×600 16-bit framebuffer is ~750KB, which
+doesn't fit in internal SRAM alone.
 
-**Search terms for ordering**: `Waveshare ESP32-S3 7inch Touch LCD` or part number `ESP32-S3-Touch-LCD-7B`
+---
 
-### Alternative Boards (if unavailable)
+## Sketch structure
 
-| Board | Size | Notes |
+```
+metro_display/
+├── metro_display.ino   # setup, loop, WiFi, HTTP poll
+├── config.h            # WiFi credentials, API host, stop config JSON
+├── display.h           # Waveshare board driver + LVGL flush callback
+└── ui.h                # LVGL layout, widget builders, ui_update()
+```
+
+**`config.h` is the only file you need to edit before flashing.**
+Set your WiFi credentials, the IP of the machine running `metro_api`, and
+optionally adjust the stop config JSON (same format as `config.json`).
+
+---
+
+## Setup
+
+### 1. Arduino IDE board config
+
+```
+Board:            ESP32S3 Dev Module
+Flash Size:       16MB (or match board)
+PSRAM:            OPI PSRAM          ← required
+Partition Scheme: Huge APP (3MB No OTA / 1MB SPIFFS)
+Upload Speed:     921600
+USB CDC On Boot:  Enabled            ← Serial over USB-C without adapter
+```
+
+### 2. Install libraries (Library Manager)
+
+| Library | Version | Notes |
 |---|---|---|
-| Elecrow CrowPanel 7.0" ESP32 | 7" 1024×600 | Similar spec, slightly cheaper, good LVGL support |
-| Sunton ESP32-S3 7" | 7" 1024×600 | Budget AliExpress option, same community drivers |
-| Waveshare ESP32-S3-Touch-LCD-5B | 5" 1024×600 | Drop-down if 7" feels too large; identical software |
+| LVGL | 8.3.x | Pin to v8 — do not install v9 |
+| ArduinoJson | 7.x | |
+| ESP32_Display_Panel | latest | Waveshare board driver |
 
-### UI Library
+### 3. LVGL config
 
-- **LVGL v8.3** (recommended over v9 for now — more Arduino examples exist for this board)
-- `ArduinoJson` v7 for parsing the backend API response
-
----
-
-## Transit Display Requirements
-
-### Panel 1 — N Train at 39th Ave (Sunnyside/Jackson Heights, Queens)
-
-- Show next **3 departures in each direction**:
-  - **Northbound** toward Astoria-Ditmars Blvd
-  - **Southbound** toward Manhattan / Coney Island
-- Display format per train: `line badge | destination | ETA (min)` or arrival time
-- Data source: MTA GTFS-RT feed (N/W/R/Q line)
-- GTFS stop: `39 Av` on the N/W line (stop ID to be confirmed via `find_stop_ids()`)
-
-### Panel 2 — E Train at Queens Plaza (Queens)
-
-- Show next **3 southbound (downtown) departures**
-  - Direction: toward World Trade Center / Jamaica
-- Display format: `line badge | destination | ETA (min)`
-- Data source: MTA GTFS-RT feed (E/F/M/R line)
-- GTFS stop: `Queens Plaza` on the E/M/R line (stop ID to be confirmed)
-
-### Panel 3 — 7 Train at Queensboro Plaza (Queens)
-
-- Show next **3 westbound (downtown) departures**
-  - Direction: toward Hudson Yards / 34 St
-- Display format: `line badge | destination | ETA (min)`
-- Data source: MTA GTFS-RT feed (7 line)
-- GTFS stop: `Queensboro Plaza` on the 7 line (stop ID to be confirmed)
-
----
-
-## Weather Display Requirements
-
-- **Collapsed/compact panel** — does not dominate the layout
-- Show:
-  - Current temperature (°F)
-  - Daily high / low (°F)
-  - Precipitation probability or rain indicator
-  - Wind speed (mph) and direction
-- Update interval: every 10–15 minutes (weather changes slowly)
-- Data source: Open-Meteo API (free, no API key required) or OpenWeatherMap
-- Location: Queens, NY (lat/lon hardcoded)
-
----
-
-## Display Layout (1024×600 — 7" screen)
-
-```
-+------------------+------------------+-------------------+
-|   N — 39th Ave   |  E — Queens Plz  | 7 — Queensboro Plz|
-|                  |                  |                   |
-|  [N] Astoria     |  [E] WTC  2 min  | [7] Hudson Yd 1min|
-|     3 min        |  [E] WTC  8 min  | [7] Hudson Yd 6min|
-|  [N] Astoria     |  [E] WTC 14 min  | [7] Hudson Yd 11mn|
-|     9 min        |                  |                   |
-|  [N] Astoria     |                  |                   |
-|    16 min        |                  |                   |
-|                  |                  |                   |
-|  [N] Coney Is    |                  |                   |
-|     5 min        |                  |                   |
-|  [N] Coney Is    |                  |                   |
-|    11 min        |                  |                   |
-|  [N] Coney Is    |                  |                   |
-|    18 min        |                  |                   |
-+------------------+------------------+-------------------+
-|  NOW 54°F   HIGH 61°F   LOW 48°F   Rain 20%   Wind 9mph NW  |
-+-------------------------------------------------------------+
-```
-
----
-
-## Data Refresh Intervals
-
-| Data | Interval |
-|---|---|
-| Transit ETAs | Every 30 seconds |
-| Weather | Every 10 minutes |
-
----
-
-## Communication Architecture
-
-Two options under consideration:
-
-**Option A — Direct ESP32 fetch** (simpler, self-contained)
-- ESP32 calls MTA GTFS-RT feeds directly over WiFi
-- ESP32 calls weather API directly
-- No dependency on the Python `metro_api` backend
-- Con: protobuf parsing on ESP32 is non-trivial
-
-**Option B — Python API backend + ESP32 client** (preferred)
-- `metro_api` Python backend parses GTFS-RT and exposes a simple JSON REST endpoint
-- ESP32 polls the JSON endpoint every 30s — much simpler parsing on device
-- Weather can be fetched by backend or device directly
-- Allows logic changes without re-flashing the device
-
-**Recommendation**: Option B. The Python backend already has working GTFS-RT parsing logic.
-The ESP32 should only be responsible for rendering, not feed parsing.
-
----
-
-## JSON API Contract (Option B — proposed)
-
-`GET /api/eta` response shape:
-
-```json
-{
-  "updated_at": "2026-04-03T14:32:00",
-  "stops": {
-    "n_39th_ave": {
-      "northbound": [
-        { "line": "N", "destination": "Astoria-Ditmars Blvd", "eta_min": 3 },
-        { "line": "N", "destination": "Astoria-Ditmars Blvd", "eta_min": 9 }
-      ],
-      "southbound": [
-        { "line": "N", "destination": "Coney Island", "eta_min": 5 },
-        { "line": "N", "destination": "Coney Island", "eta_min": 11 }
-      ]
-    },
-    "e_queens_plaza": {
-      "southbound": [
-        { "line": "E", "destination": "World Trade Center", "eta_min": 2 },
-        { "line": "E", "destination": "World Trade Center", "eta_min": 8 }
-      ]
-    },
-    "seven_queensboro": {
-      "westbound": [
-        { "line": "7", "destination": "Hudson Yards", "eta_min": 1 },
-        { "line": "7", "destination": "Hudson Yards", "eta_min": 6 }
-      ]
-    }
-  },
-  "weather": {
-    "current_temp_f": 54,
-    "high_f": 61,
-    "low_f": 48,
-    "rain_chance_pct": 20,
-    "wind_mph": 9,
-    "wind_dir": "NW"
-  }
-}
-```
-
----
-
-## Hardware Setup & Testing Guide
-
-### Prerequisites
-
-1. **Arduino IDE 2.x** (recommended) or PlatformIO in VS Code
-2. **ESP32 Arduino Core** — install via Boards Manager:
-   - Add to Additional Boards URLs: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-   - Install: `esp32 by Espressif Systems` (v3.x)
-3. **Required libraries** — install via Library Manager:
-   - `LVGL` by LVGL (v8.3.x — pin to v8, not v9)
-   - `ArduinoJson` by Benoit Blanchon (v7.x)
-   - `ESP32Time` by Felix Biego (for NTP clock sync)
-
-### Board Configuration (Arduino IDE)
-
-```
-Board:              ESP32S3 Dev Module
-Flash Size:         16MB (or match your board)
-PSRAM:              OPI PSRAM  ← critical, enables the 8MB PSRAM
-Partition Scheme:   Huge APP (3MB No OTA / 1MB SPIFFS)
-Upload Speed:       921600
-USB CDC On Boot:    Enabled  ← allows Serial over USB-C
-```
-
-### LVGL Configuration
-
-Copy the LVGL config template into your sketch folder:
-
+Copy the template and place it where Arduino can find it:
 ```bash
-# From your Arduino libraries folder:
 cp ~/Arduino/libraries/lvgl/lv_conf_template.h ~/Arduino/libraries/lv_conf.h
 ```
 
-Then in `lv_conf.h`, set:
+Required settings in `lv_conf.h`:
 ```c
-#define LV_COLOR_DEPTH 16
-#define LV_HOR_RES_MAX 1024
-#define LV_VER_RES_MAX 600
-#define LV_MEM_SIZE (512 * 1024U)   // 512KB — safe with PSRAM
+#define LV_COLOR_DEPTH        16
+#define LV_USE_FLEX            1
+#define LV_FONT_MONTSERRAT_12  1
+#define LV_FONT_MONTSERRAT_14  1
+#define LV_FONT_MONTSERRAT_16  1
 ```
 
-### Step 1 — Smoke Test: Light Up the Display
-
-Flash this minimal sketch first to verify the board and display are working before
-adding any application logic:
+### 4. Edit `config.h`
 
 ```cpp
-#include <Arduino.h>
-#include <lvgl.h>
-#include <ESP_Panel_Library.h>  // Waveshare ESP32-S3-Touch-LCD-7B driver
-
-ESP_Panel *panel = nullptr;
-
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[1024 * 20];  // 20-line draw buffer
-
-void my_disp_flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
-    panel->getLcd()->drawBitmap(area->x1, area->y1,
-                                 area->x2 - area->x1 + 1,
-                                 area->y2 - area->y1 + 1,
-                                 (uint16_t *)color_p);
-    lv_disp_flush_ready(drv);
-}
-
-void setup() {
-    Serial.begin(115200);
-    panel = new ESP_Panel();
-    panel->init();
-    panel->begin();
-
-    lv_init();
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, 1024 * 20);
-
-    static lv_disp_drv_t disp_drv;
-    lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res  = 1024;
-    disp_drv.ver_res  = 600;
-    disp_drv.flush_cb = my_disp_flush;
-    disp_drv.draw_buf = &draw_buf;
-    lv_disp_drv_register(&disp_drv);
-
-    // Draw a test label
-    lv_obj_t *label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "NYC Metro Display - OK");
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-
-    Serial.println("Display init OK");
-}
-
-void loop() {
-    lv_timer_handler();
-    delay(5);
-}
+const char* WIFI_SSID     = "your-ssid";
+const char* WIFI_PASSWORD = "your-password";
+const char* API_HOST      = "192.168.1.xxx";  // IP of machine running metro_api
 ```
-
-**Expected result**: white screen with "NYC Metro Display - OK" centered. If you see
-this, the display, LVGL, and board are all working.
-
-### Step 2 — WiFi + API Test
-
-Once the display is working, verify WiFi and JSON fetching independently before
-combining with the UI:
-
-```cpp
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
-
-const char* SSID     = "your-ssid";
-const char* PASSWORD = "your-password";
-const char* API_URL  = "http://YOUR_PC_IP:8000/api/eta";  // metro_api backend
-
-void setup() {
-    Serial.begin(115200);
-    WiFi.begin(SSID, PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-    Serial.println("\nWiFi connected: " + WiFi.localIP().toString());
-
-    HTTPClient http;
-    http.begin(API_URL);
-    int code = http.GET();
-    if (code == 200) {
-        JsonDocument doc;
-        deserializeJson(doc, http.getString());
-        Serial.println("First N train ETA: " +
-            String(doc["stops"]["n_39th_ave"]["northbound"][0]["eta_min"].as<int>()) + " min");
-    } else {
-        Serial.println("HTTP error: " + String(code));
-    }
-    http.end();
-}
-
-void loop() {}
-```
-
-**Expected result**: Serial monitor prints the first N train ETA from your Python backend.
-
-### Step 3 — Serial Monitor Debugging
-
-- Open Serial Monitor at **115200 baud**
-- USB CDC mode (set above) means no separate UART adapter needed — just the USB-C cable
-- If the board doesn't appear as a COM/tty port, hold **BOOT button**, tap **RESET**, release BOOT
-
-### Common Issues
-
-| Symptom | Fix |
-|---|---|
-| Display white/blank after flash | Check PSRAM is set to `OPI PSRAM` in board config |
-| Board not detected as serial port | Enable `USB CDC On Boot` in board settings |
-| LVGL crashes or corrupts display | Reduce `LV_MEM_SIZE` or draw buffer size |
-| HTTP request fails | Confirm PC and ESP32 are on same WiFi network; check firewall |
-| Sketch too large | Switch partition scheme to `Huge APP` |
 
 ---
 
-## Status & Next Steps
+## Testing sequence
 
-### Done
-- [x] Hardware selected — Waveshare ESP32-S3-Touch-LCD-7B (1024×600)
-- [x] Architecture decided — Option B (Python backend → JSON → ESP32)
-- [x] `/api/eta` endpoint implemented in `metro_api` (see `metro_api/README.md`)
-- [x] Display resolution, LVGL config, and test sketches documented above
+### Step 1 — Smoke test: does the display light up?
 
-### Next — Arduino side
-- [ ] **Step 1**: Flash smoke test sketch, confirm display lights up
-- [ ] **Step 2**: Flash WiFi+API test sketch, confirm JSON reaches the board over serial
-- [ ] **Step 3**: Verify GTFS stop IDs return real data (`poetry run python -m scripts.test`)
-- [ ] **Step 4**: Build main sketch — WiFi connect, 30s poll loop, JSON parse
-- [ ] **Step 5**: LVGL layout — 3-column train panels + weather strip, MTA line color badges
-- [ ] **Step 6**: OTA firmware updates (nice-to-have, avoids USB reflash for tweaks)
+Flash `metro_display.ino` as-is (before WiFi is configured). You should see
+a dark screen with a "Connecting to WiFi..." status label. This confirms the
+display driver and LVGL are working.
 
-### Next — Backend side
-- [ ] Run as a systemd service so it survives reboots
-- [ ] Add `config.py` / `.env` for WiFi credentials and any future API keys
+If the screen stays white or blank:
+- Check PSRAM is set to `OPI PSRAM` in board config
+- Check the `ESP32_Display_Panel` library is installed
+
+### Step 2 — WiFi + API test
+
+Set your credentials and `API_HOST` in `config.h`. Make sure `metro_api` is
+running on the target machine:
+
+```bash
+cd metro_api
+poetry run uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Flash and open Serial Monitor at **115200 baud**. Expected output:
+
+```
+NYC Metro Display — boot
+display: init OK (1024x600)
+ui: init OK
+WiFi: connecting to your-ssid
+WiFi: connected — 192.168.1.xxx
+fetch: OK  updated_at=2026-04-04T12:00:00
+ui: updated (3 stops)
+```
+
+If you see `HTTP -1` or a connection error:
+- Confirm the PC and ESP32 are on the same network
+- Check `API_HOST` is the correct IP (not `localhost`)
+- Check firewall isn't blocking port 8000
+
+### Step 3 — Full display
+
+Once step 2 passes, the full UI should render: 3 train columns + weather strip.
+The display updates every 30 seconds automatically.
+
+---
+
+## Display layout
+
+```
+┌─────────────────────┬─────────────────────┬──────────────────────┐
+│       39 Av         │    Queens Plaza      │  Queensboro Plaza    │
+├─────────────────────┼─────────────────────┼──────────────────────┤
+│  Northbound  ^      │  v  Southbound       │  <  Westbound        │
+│  [N] Astoria  3 min │  [E] WTC      2 min  │  [7] Hudson Yd 1 min │
+│  [N] Astoria  9 min │  [R] WTC      5 min  │  [7] Hudson Yd 6 min │
+│  [N] Astoria 16 min │  [E] WTC     12 min  │  [7] Hudson Yd 11min │
+│                     │                     │                      │
+│  v  Southbound      │                     │  Northbound  ^       │
+│  [N] Coney Is 5 min │                     │  [N] Astoria  4 min  │
+│  [N] Coney Is 11min │                     │  [W] Astoria  9 min  │
+│  [N] Coney Is 18min │                     │                      │
+│                     │                     │  v  Southbound       │
+│                     │                     │  [N] Coney Is 7 min  │
+│                     │                     │  [W] Coney Is 14min  │
+├─────────────────────┴─────────────────────┴──────────────────────┤
+│    57°F     H 65°  /  L 41°     Rain 3%     Wind 4 mph S         │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Line badges are colored with MTA official hex colors (provided by the API).
+Yellow lines (N/Q/R/W) automatically get black badge text for readability.
+
+---
+
+## Common issues
+
+| Symptom | Fix |
+|---|---|
+| White/blank screen | Set PSRAM to `OPI PSRAM` in board config |
+| Board not detected as serial port | Enable `USB CDC On Boot`; if needed, hold BOOT + tap RESET |
+| `HTTP -1` | Wrong `API_HOST`, or ESP32 and server on different networks |
+| LVGL crashes / corrupted display | Confirm `LV_USE_FLEX 1` and fonts enabled in `lv_conf.h` |
+| Sketch too large to flash | Set partition scheme to `Huge APP` |
+| `PSRAM alloc failed` in Serial | PSRAM not enabled in board config |
+
+---
+
+## Stop config
+
+Stops are defined in `config.h` as `CONFIG_JSON` — the same JSON that gets
+POSTed to the API on every poll. To change stops: edit `CONFIG_JSON` and reflash.
+The API has no hardcoded stops; it fetches whatever the device requests.
+
+The `config.json` in this directory is the canonical copy for reference.
+`config.h` mirrors it as a C string literal.

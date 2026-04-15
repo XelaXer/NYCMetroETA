@@ -31,7 +31,7 @@ const char* CONFIG_JSON = R"({
       ]
     },
     {
-      "feeds": ["F", "M"],
+      "feeds": ["F", "M", "R"],
       "label": "36 St",
       "directions": [
         {"label": "southbound", "stop_id": "G20S"}

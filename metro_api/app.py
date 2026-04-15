@@ -70,6 +70,58 @@ class ETARequest(BaseModel):
     stops: list[StopConfig]
 
 # ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+class TrainArrival(BaseModel):
+    line: str
+    color: str
+    dest: str
+    eta_min: int
+    departs_at: str
+    trip_id: str
+
+class DirectionResult(BaseModel):
+    label: str
+    trains: list[TrainArrival]
+
+class StopResult(BaseModel):
+    label: str
+    directions: list[DirectionResult]
+
+class WeatherResult(BaseModel):
+    current_temp_f: int
+    high_f: int
+    low_f: int
+    rain_chance_pct: int
+    wind_mph: int
+    wind_dir: str
+
+class ETAResponse(BaseModel):
+    updated_at: str
+    stops: list[StopResult]
+    weather: WeatherResult
+
+class StopDirection(BaseModel):
+    stop_id: str
+    lines: list[str]
+    colors: dict[str, str]
+
+class StopInfo(BaseModel):
+    stop_id: str
+    name: str
+    directions: list[StopDirection]
+
+class CacheStatus(BaseModel):
+    transit: bool
+    weather: bool
+
+class HealthResponse(BaseModel):
+    status: str
+    time: str
+    cache: CacheStatus
+
+# ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
 
@@ -286,7 +338,7 @@ async def _get_all_stops() -> list[dict]:
     return result
 
 
-@app.get("/api/stops")
+@app.get("/api/stops", response_model=list[StopInfo])
 async def list_stops():
     """
     Returns all subway stops with their available lines, grouped by station.
@@ -297,7 +349,7 @@ async def list_stops():
     return await _get_all_stops()
 
 
-@app.post("/api/eta")
+@app.post("/api/eta", response_model=ETAResponse)
 async def get_eta(request: ETARequest):
     """
     Polled by the Arduino display every 30 seconds.
@@ -314,7 +366,7 @@ async def get_eta(request: ETARequest):
     }
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     cached_transit = any(k.startswith("transit_") for k in _cache)
     cached_weather = "weather" in _cache

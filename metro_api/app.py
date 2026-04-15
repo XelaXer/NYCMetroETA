@@ -13,12 +13,16 @@ curl test:
 """
 
 import asyncio
+import csv
 import hashlib
+import importlib.resources as ir
+import io
 import math
 from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
+import nyct_gtfs
 from fastapi import FastAPI
 from nyct_gtfs import NYCTFeed
 from pydantic import BaseModel
@@ -98,6 +102,33 @@ def _eta_minutes(t: datetime) -> int:
 def _wind_direction(degrees: float) -> str:
     dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
     return dirs[round(degrees / 45) % 8]
+
+
+# ---------------------------------------------------------------------------
+# Static stops index (loaded once from nyct_gtfs package data)
+# ---------------------------------------------------------------------------
+
+def _load_stops_index() -> dict[str, dict]:
+    """
+    Returns a dict keyed by directional stop_id (e.g. "R08N") with:
+        { "name": "39 Av", "parent_id": "R08" }
+    Parent station rows (location_type=1) are excluded — only boardable stops.
+    """
+    text = ir.files(nyct_gtfs).joinpath("gtfs_static/stops.txt").read_text()
+    result = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        if row["location_type"] == "0":
+            result[row["stop_id"]] = {
+                "name": row["stop_name"],
+                "parent_id": row["parent_station"],
+            }
+    return result
+
+_STOPS_INDEX: dict[str, dict] = _load_stops_index()
+
+ALL_FEEDS = ["1", "A", "B", "D", "G", "J", "L", "N", "7", "SI"]
+
+STOPS_TTL = timedelta(minutes=30)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +227,75 @@ async def get_weather() -> dict:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+def _scan_feed_for_stops(feed_id: str) -> dict[str, set[str]]:
+    """Returns { directional_stop_id: {route_id, ...} } for one feed."""
+    result: dict[str, set[str]] = {}
+    now = datetime.now()
+    feed = NYCTFeed(feed_id)
+    for trip in feed.trips:
+        for st in trip.stop_time_updates:
+            if st.departure and st.departure > now:
+                result.setdefault(st.stop_id, set()).add(trip.route_id)
+    return result
+
+
+async def _get_all_stops() -> list[dict]:
+    cached = _cache_get("all_stops", STOPS_TTL)
+    if cached is not None:
+        return cached
+
+    loop = asyncio.get_event_loop()
+    feed_results = await asyncio.gather(*[
+        loop.run_in_executor(None, _scan_feed_for_stops, fid)
+        for fid in ALL_FEEDS
+    ])
+
+    # Merge: parent_id → { name, directions: { stop_id → lines[] } }
+    parents: dict[str, dict] = {}
+    for feed_map in feed_results:
+        for stop_id, lines in feed_map.items():
+            meta = _STOPS_INDEX.get(stop_id)
+            if not meta:
+                continue
+            parent_id = meta["parent_id"]
+            if parent_id not in parents:
+                parents[parent_id] = {"name": meta["name"], "directions": {}}
+            dirs = parents[parent_id]["directions"]
+            if stop_id not in dirs:
+                dirs[stop_id] = set()
+            dirs[stop_id].update(lines)
+
+    result = [
+        {
+            "stop_id": parent_id,
+            "name": info["name"],
+            "directions": [
+                {
+                    "stop_id": sid,
+                    "lines": sorted(lines),
+                    "colors": {line: LINE_COLORS.get(line, "888888") for line in lines},
+                }
+                for sid, lines in sorted(info["directions"].items())
+            ],
+        }
+        for parent_id, info in sorted(parents.items(), key=lambda x: x[1]["name"])
+    ]
+
+    _cache_set("all_stops", result)
+    return result
+
+
+@app.get("/api/stops")
+async def list_stops():
+    """
+    Returns all subway stops with their available lines, grouped by station.
+    Useful for building a stop config to send to POST /api/eta.
+    Sourced from live feeds — only stops with active trains are returned.
+    Cached for 30 minutes.
+    """
+    return await _get_all_stops()
+
 
 @app.post("/api/eta")
 async def get_eta(request: ETARequest):

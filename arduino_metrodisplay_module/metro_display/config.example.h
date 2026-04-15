@@ -24,10 +24,17 @@ const char* CONFIG_JSON = R"({
       ]
     },
     {
-      "feeds": ["E", "N"],
+      "feeds": ["E", "F", "N"],
       "label": "Queens Plaza",
       "directions": [
         {"label": "southbound", "stop_id": "G21S"}
+      ]
+    },
+    {
+      "feeds": ["F", "M"],
+      "label": "36 St",
+      "directions": [
+        {"label": "southbound", "stop_id": "G20S"}
       ]
     },
     {

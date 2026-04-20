@@ -156,6 +156,14 @@ void loop() {
         wifi_connect();
     }
 
+    // Manual refresh triggered by taskbar button
+    if (g_force_refresh) {
+        g_force_refresh = false;
+        Serial.println("fetch: manual refresh");
+        fetch_and_render();
+        _last_poll = millis();
+    }
+
     // Poll on interval
     if (millis() - _last_poll >= POLL_INTERVAL_MS) {
         _last_poll = millis();

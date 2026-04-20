@@ -14,7 +14,7 @@ via LVGL.
 |---|---|
 | MCU | ESP32-S3R8 — dual-core 240MHz, 8MB PSRAM |
 | Display | 7" IPS TFT, 1024×600, RGB parallel 16-bit |
-| Touch | Capacitive 5-point (not used for UI interaction) |
+| Touch | Capacitive 5-point (GT911) — used for taskbar buttons |
 | WiFi | 802.11 b/g/n 2.4GHz |
 | USB | USB-C — programming + power + Serial |
 
@@ -127,36 +127,58 @@ If you see `HTTP -1` or a connection error:
 
 ### Step 3 — Full display
 
-Once step 2 passes, the full UI should render: 3 train columns + weather strip.
-The display updates every 30 seconds automatically.
+Once step 2 passes, the full UI should render: 3 train columns (39 Av,
+Queens Plaza, Queensboro Plaza + Court Square) with ETA pill rows, and the
+taskbar at the bottom. The display updates every 30 seconds automatically, or
+immediately when the `[↻]` button is tapped.
 
 ---
 
 ## Display layout
 
+Screen: **1024 × 600** landscape. Three equal columns (341px each) for transit
+data, with a 55px taskbar along the bottom.
+
 ```
-┌─────────────────────┬─────────────────────┬──────────────────────┐
-│       39 Av         │    Queens Plaza      │  Queensboro Plaza    │
-├─────────────────────┼─────────────────────┼──────────────────────┤
-│  Northbound  ^      │  v  Southbound       │  <  Westbound        │
-│  [N] Astoria  3 min │  [E] WTC      2 min  │  [7] Hudson Yd 1 min │
-│  [N] Astoria  9 min │  [R] WTC      5 min  │  [7] Hudson Yd 6 min │
-│  [N] Astoria 16 min │  [E] WTC     12 min  │  [7] Hudson Yd 11min │
-│                     │                     │                      │
-│  v  Southbound      │                     │  Northbound  ^       │
-│  [N] Coney Is 5 min │                     │  [N] Astoria  4 min  │
-│  [N] Coney Is 11min │                     │  [W] Astoria  9 min  │
-│  [N] Coney Is 18min │                     │                      │
-│                     │                     │  v  Southbound       │
-│                     │                     │  [N] Coney Is 7 min  │
-│                     │                     │  [W] Coney Is 14min  │
-├─────────────────────┴─────────────────────┴──────────────────────┤
-│    57°F     H 65°  /  L 41°     Rain 3%     Wind 4 mph S         │
-└──────────────────────────────────────────────────────────────────┘
+┌───────────────────────┬───────────────────────┬───────────────────────┐ ↑
+│  39 Av                │  Queens Plaza         │  Queensboro Plaza     │ │
+│  ─────────────────    │  ─────────────────    │  ─────────────────    │ │
+│  ^ Northbound         │  v Southbound         │  < Westbound          │ │
+│  [N] Astoria  1  9 m  │  [E] Jamaica  2  8 15 │  [7] 34 St  0   4   7 │ 5
+│  [N] Coney   23 32 m  │  [N] Whitehall 4 17 26│                       │ 4
+│                       │  [W] Astoria   9 20 27│  ^ Northbound         │ 5
+│  v Southbound         │                       │  [N] Astoria  1  13   │ p
+│  [N] Whitehall 5 18 m │                       │                       │ x
+│  [N] Astoria   9 22 m │                       │  v Southbound         │ │
+│                       │                       │  [N] Whitehall 5  18  │ │
+│                       │                       │                       │ │
+│                       │                       │  ── Court Square ──   │ │
+│                       │                       │  v Southbound         │ │
+│                       │                       │  [G] Church Av 3 11 18│ ↓
+├───────────────────────┴───────────────────────┴───────────────────────┤ ↑
+│  82°F   H:85° / L:71°   Rain 5%   Wind 8 mph SW      [ ↻ ]  [ ↕ ]  │ 55px
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-Line badges are colored with MTA official hex colors (provided by the API).
-Yellow lines (N/Q/R/W) automatically get black badge text for readability.
+**Column assignments** (hardcoded to match `CONFIG_JSON` stop order):
+
+| Column | Stop | Lines | Directions |
+|--------|------|-------|------------|
+| 0 | 39 Av | N | northbound, southbound |
+| 1 | Queens Plaza | E, N | southbound |
+| 2 | Queensboro Plaza + Court Square | 7, N / G | westbound, northbound, southbound / southbound |
+
+**ETA pills:** up to 3 upcoming times per line+destination row. `0 min` shows
+"Now". Trains with the same line and destination are grouped into a single row.
+Line badges use MTA official hex colors (provided by the API); yellow lines
+(N/Q/R/W) automatically get black badge text for contrast.
+
+**Bottom taskbar:**
+- Left: weather summary (temp, high/low, rain %, wind)
+- Right: two touchscreen buttons
+  - `[↻]` — force an immediate data refresh (skips the 30-second wait)
+  - `[↕]` — flip the display 180° (software rotation via LVGL); useful when
+    the device is mounted upside-down. State resets on power cycle.
 
 ---
 

@@ -31,6 +31,16 @@ The 7B should be flashed using the **`Waveshare ESP32S3 XIP`** board, not `Waves
 6. Updated `ui.h`: wrapped `ui_set_status()` and `ui_update()` with `lvgl_port_lock/unlock`; removed `lv_timer_handler()` calls (LVGL now has its own task).
 7. Updated `metro_display.ino`: added `lvgl_port.h` include, wrapped `ui_init()` with lock, removed `lv_timer_handler()` from the WiFi wait loop and `loop()`.
 
+## Board capabilities to leverage
+
+The ESP32-S3-Touch-LCD-7B supports **real-time battery voltage monitoring** and **backlight brightness control** via Waveshare APIs. Both are worth using in firmware:
+
+- **Battery indicator** — read the ADC voltage pin to derive charge percentage and show it on-screen.
+- **Dynamic backlight** — the backlight PWM is software-controllable. Running at 50% cuts display power roughly in half. Combined with ESP32-S3 WiFi modem sleep and light sleep when the panel is idle, this meaningfully extends runtime.
+- **Auto-dim strategy** — define an "active" vs "idle" state; dim after N seconds of inactivity, restore on touch.
+
+---
+
 ## What to do next
 
 ### 1. Flash and verify display boots
@@ -69,7 +79,7 @@ Once data is flowing:
 - `departs_at` field doesn't break JSON parsing
 - Weather strip shows current temp, high/low, rain chance, wind
 
-### 4. Commit everything
+### 4. Commit driver work
 
 ```bash
 git add arduino_metrodisplay_module/metro_display/
@@ -82,3 +92,24 @@ Files that changed or were added:
 - `metro_display.ino` (lock, removed lv_timer_handler)
 - `esp_panel_board_supported_conf.h` (no longer relevant — can be deleted)
 - 10 new Waveshare driver `.h`/`.cpp` files
+
+---
+
+## Upcoming features
+
+### 5. Battery indicator
+
+Read the ADC voltage pin on the 7B to derive charge percentage. Display a small battery icon / percentage in a corner of the UI. Update on each poll cycle.
+
+### 6. Brightness controls
+
+Add on-screen touch buttons (or a settings overlay) to step backlight brightness up/down. Also implement auto-dim: after ~30s of no touch input, drop to 30–50%; restore on any touch event.
+
+### 7. Display orientation toggle
+
+Add a touchscreen button (or gesture) to flip between landscape and portrait mode. Portrait (vertical) may work better mounted in certain spots — consider making this a persistent setting stored in NVS so it survives reboots.
+
+### 8. Config overlay — show/hide stations and directions
+
+A button to open a settings panel where you can toggle individual stops or directions (e.g. hide southbound at a stop you never use). Persist selections in NVS.
+

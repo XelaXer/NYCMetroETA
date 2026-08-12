@@ -1,0 +1,75 @@
+name: gitleaks
+
+# The non-local half of the secret net.
+#
+# GitHub Push Protection is not available to us — these repos are private, and
+# secret scanning on private repos needs the paid Secret Protection add-on
+# (verified 2026-08-08). Gitleaks is therefore the *only* git-time control, so
+# it cannot live purely in a local hook that `--no-verify` or a fresh clone on
+# another machine walks straight past.
+#
+# Design: super-workspace/plans/secrets-architecture.md §10
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    # GitHub-hosted on purpose. The self-hosted runners live in the cluster this
+    # repo deploys to, so a scan pinned to them would go dark exactly when the
+    # cluster does — and a secret scanner that is down is indistinguishable from
+    # one that found nothing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history. Scanning only the pushed range would miss a secret
+          # reintroduced by a force-push or a rebase, and these histories are
+          # small enough (<200 commits) that a full scan costs seconds.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          # Pinned and checksummed rather than gitleaks/gitleaks-action@v2: the
+          # action requires a paid GITLEAKS_LICENSE for organisation-owned repos
+          # (SecondBrainUS is an org), and a security control should not be one
+          # unreviewed tag away from running someone else's new code.
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "${SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan history
+        run: |
+          # --redact is not optional: Actions logs are retained and readable by
+          # anyone with repo access, so an unredacted finding would republish
+          # the secret to a wider audience than the commit did.
+          # -v prints file, line, rule and fingerprint — enough to fix it, and
+          # the fingerprint is what you paste into .gitleaksignore if it is a
+          # genuine false positive.
+          gitleaks git . --redact --no-banner -v \
+            --report-format sarif --report-path results.sarif
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-${{ github.run_number }}
+          path: results.sarif
+          if-no-files-found: ignore
+          retention-days: 30

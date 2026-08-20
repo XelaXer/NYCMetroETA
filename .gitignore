@@ -7,3 +7,11 @@ __pycache__/
 
 # Arduino local config — copy config.example.h → config.h and fill in your values
 arduino_metrodisplay_module/metro_display/config.h
+
+# Secrets — never commit. See super-workspace/plans/secrets-architecture.md §8.
+# metro_api/env/.env was tracked-but-empty since the initial commit. Nothing
+# ever leaked through it, but a tracked .env is a loaded gun: the next person
+# to put a value in it commits it by default.
+.env
+.env.*
+!.env.example

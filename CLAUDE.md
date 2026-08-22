@@ -88,6 +88,6 @@ Test workflow (`.github/workflows/test.yml`): pytest on push/PR.
 
 ## Gotchas
 
-- `config.py` and `env/.env` both exist but are **empty** — no env vars currently used; everything is hardcoded in `app.py`
+- `config.py` and `env/.env` are both **empty** — no env vars currently used; everything is hardcoded in `app.py`. `env/.env` is gitignored and no longer tracked, so a fresh clone will not have it; create it if you add env vars
 - Arduino config format is `"feeds"` (array), not `"feed"` (singular) — old docs are wrong
 - ESP32 7B board: must select "Waveshare ESP32-S3 7B" not generic board, uses proprietary IO expander at 0x24
